@@ -32,7 +32,7 @@ def validate_working_hours(scheduled_at_utc: datetime) -> None:
 
     if local_start.weekday() >= 5:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=422,
             detail=(
                 "Meetings can only be scheduled on weekdays (Monday-Friday) "
                 "in Asia/Almaty timezone."
@@ -44,7 +44,7 @@ def validate_working_hours(scheduled_at_utc: datetime) -> None:
 
     if local_start < work_start_dt or local_end > work_end_dt:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=422,
             detail=(
                 "Meeting (60 minutes) must fit entirely within working hours "
                 "09:00-18:00 Asia/Almaty (latest start time is 17:00 Asia/Almaty)."

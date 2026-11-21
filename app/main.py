@@ -367,12 +367,12 @@ def create_call(
         ).fetchone()
         if meeting is None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=422,
                 detail=f"Meeting with id={payload.meeting_id} does not exist.",
             )
         if meeting["company_id"] != payload.company_id:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=422,
                 detail=(
                     f"Meeting {payload.meeting_id} belongs to another company "
                     f"and cannot be linked to company {payload.company_id}."
@@ -380,7 +380,7 @@ def create_call(
             )
         if meeting["status"] != "scheduled":
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=422,
                 detail=(
                     f"Meeting {payload.meeting_id} is not active "
                     f"(current status: '{meeting['status']}')."

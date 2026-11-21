@@ -1,0 +1,92 @@
+@baseUrl = http://localhost:8000
+
+### 0. Healthcheck
+GET {{baseUrl}}/health
+
+### 1. Получить список менеджеров (seed-данные)
+GET {{baseUrl}}/managers
+
+### 2. Добавить организацию
+POST {{baseUrl}}/companies
+Content-Type: application/json
+
+{
+  "name": "ТОО Алматы Трейд Компани",
+  "bin": "170340021554",
+  "phone": "+77011234567"
+}
+
+### 3. Список организаций (с фильтром и пагинацией)
+GET {{baseUrl}}/companies?limit=20&offset=0
+
+### 4. Зафиксировать звонок: не дозвонились (обновит статус компании на no_answer)
+POST {{baseUrl}}/calls
+Content-Type: application/json
+
+{
+  "company_id": 1,
+  "manager_id": 1,
+  "result": "no_answer",
+  "notes": "Абонент не отвечает, перезвонить завтра"
+}
+
+### 5. Назначить встречу (понедельник 10:00 Asia/Almaty = 05:00 UTC)
+POST {{baseUrl}}/meetings
+Content-Type: application/json
+
+{
+  "company_id": 1,
+  "manager_id": 1,
+  "scheduled_at": "2026-11-23T05:00:00Z"
+}
+
+### 6. Зафиксировать звонок meeting_set с привязкой к созданной встрече
+POST {{baseUrl}}/calls
+Content-Type: application/json
+
+{
+  "company_id": 1,
+  "manager_id": 1,
+  "result": "meeting_set",
+  "meeting_id": 1,
+  "notes": "Встреча подтверждена с директором"
+}
+
+### 7. Перенести встречу (original_scheduled_at сохранится, reschedule_count станет 1)
+PATCH {{baseUrl}}/meetings/1
+Content-Type: application/json
+
+{
+  "scheduled_at": "2026-11-23T06:00:00Z"
+}
+
+### 8. Посмотреть расписание менеджера на день (по календарному дню Asia/Almaty)
+GET {{baseUrl}}/managers/1/schedule?date=2026-11-23
+
+### 9. Отменить встречу
+PATCH {{baseUrl}}/meetings/1
+Content-Type: application/json
+
+{
+  "status": "cancelled"
+}
+
+### 10. Проверка ошибки: встреча вне рабочего времени (17:30 Asia/Almaty = 12:30 UTC -> 422)
+POST {{baseUrl}}/meetings
+Content-Type: application/json
+
+{
+  "company_id": 1,
+  "manager_id": 1,
+  "scheduled_at": "2026-11-23T12:30:00Z"
+}
+
+### 11. Проверка ошибки: звонок meeting_set без meeting_id (-> 422)
+POST {{baseUrl}}/calls
+Content-Type: application/json
+
+{
+  "company_id": 1,
+  "manager_id": 1,
+  "result": "meeting_set"
+}
