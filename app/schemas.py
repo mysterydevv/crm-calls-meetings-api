@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 CompanyStatus = Literal["new", "no_answer", "refused", "meeting_set"]
+MeetingStatus = Literal["scheduled", "cancelled", "completed"]
 
 BIN_PATTERN = re.compile(r"^\d{12}$")
 PHONE_ALLOWED_PATTERN = re.compile(r"^\+?[\d\s\-()]+$")
@@ -74,3 +75,44 @@ class CompanyListResponse(BaseModel):
     limit: int
     offset: int
     items: list[CompanyResponse]
+
+
+class MeetingCreate(BaseModel):
+    company_id: int = Field(..., gt=0)
+    manager_id: int = Field(..., gt=0)
+    scheduled_at: datetime
+
+    @field_validator("scheduled_at")
+    @classmethod
+    def validate_scheduled_at(cls, value: datetime) -> datetime:
+        return ensure_utc_aware(value)
+
+
+class MeetingResponse(BaseModel):
+    id: int
+    company_id: int
+    manager_id: int
+    scheduled_at: str
+    ends_at: str
+    original_scheduled_at: str
+    reschedule_count: int
+    status: MeetingStatus
+    created_at: str
+    updated_at: str
+
+
+class ScheduleMeetingItem(BaseModel):
+    id: int
+    scheduled_at: str
+    ends_at: str
+    original_scheduled_at: str
+    reschedule_count: int
+    status: MeetingStatus
+    company: CompanyResponse
+
+
+class ManagerScheduleResponse(BaseModel):
+    manager: ManagerResponse
+    date: str
+    timezone: str
+    meetings: list[ScheduleMeetingItem]
