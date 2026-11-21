@@ -7,6 +7,8 @@ from fastapi import Depends, FastAPI, HTTPException, Query, status
 from app.config import MEETING_DURATION
 from app.database import get_db, init_db
 from app.schemas import (
+    CallCreate,
+    CallResponse,
     CompanyCreate,
     CompanyListResponse,
     CompanyResponse,
@@ -15,6 +17,7 @@ from app.schemas import (
     ManagerScheduleResponse,
     MeetingCreate,
     MeetingResponse,
+    MeetingUpdate,
     ScheduleMeetingItem,
     format_utc,
 )
@@ -64,6 +67,24 @@ def _get_manager_or_404(db: sqlite3.Connection, manager_id: int) -> sqlite3.Row:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Manager with id={manager_id} not found.",
+        )
+    return row
+
+
+def _get_meeting_or_404(db: sqlite3.Connection, meeting_id: int) -> sqlite3.Row:
+    row = db.execute(
+        """
+        SELECT id, company_id, manager_id, scheduled_at, original_scheduled_at,
+               reschedule_count, status, created_at, updated_at
+        FROM meetings
+        WHERE id = ?
+        """,
+        (meeting_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Meeting with id={meeting_id} not found.",
         )
     return row
 
@@ -258,13 +279,141 @@ def create_meeting(
     )
     db.commit()
 
+    row = _get_meeting_or_404(db, cursor.lastrowid)
+    return row_to_meeting_response(row)
+
+
+@app.patch("/meetings/{meeting_id}", response_model=MeetingResponse)
+def update_meeting(
+    meeting_id: int,
+    payload: MeetingUpdate,
+    db: sqlite3.Connection = Depends(get_db),
+) -> MeetingResponse:
+    meeting = _get_meeting_or_404(db, meeting_id)
+    now = utc_now_iso()
+
+    if payload.scheduled_at is not None:
+        if meeting["status"] != "scheduled":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Only active ('scheduled') meetings can be rescheduled "
+                    f"(current status: '{meeting['status']}')."
+                ),
+            )
+
+        validate_working_hours(payload.scheduled_at)
+        check_scheduling_conflicts(
+            db=db,
+            manager_id=meeting["manager_id"],
+            company_id=meeting["company_id"],
+            scheduled_at_utc=payload.scheduled_at,
+            exclude_meeting_id=meeting_id,
+        )
+
+        new_scheduled_iso = format_utc(payload.scheduled_at)
+        db.execute(
+            """
+            UPDATE meetings
+            SET scheduled_at = ?,
+                reschedule_count = reschedule_count + 1,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (new_scheduled_iso, now, meeting_id),
+        )
+        db.commit()
+    elif payload.status is not None:
+        if meeting["status"] != "scheduled":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Cannot change meeting status from '{meeting['status']}' "
+                    f"to '{payload.status}'."
+                ),
+            )
+
+        db.execute(
+            """
+            UPDATE meetings
+            SET status = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (payload.status, now, meeting_id),
+        )
+        db.commit()
+
+    updated = _get_meeting_or_404(db, meeting_id)
+    return row_to_meeting_response(updated)
+
+
+@app.post(
+    "/calls",
+    response_model=CallResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_call(
+    payload: CallCreate,
+    db: sqlite3.Connection = Depends(get_db),
+) -> CallResponse:
+    _get_company_or_404(db, payload.company_id)
+    _get_manager_or_404(db, payload.manager_id)
+
+    if payload.result == "meeting_set":
+        meeting = db.execute(
+            "SELECT id, company_id, status FROM meetings WHERE id = ?",
+            (payload.meeting_id,),
+        ).fetchone()
+        if meeting is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Meeting with id={payload.meeting_id} does not exist.",
+            )
+        if meeting["company_id"] != payload.company_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Meeting {payload.meeting_id} belongs to another company "
+                    f"and cannot be linked to company {payload.company_id}."
+                ),
+            )
+        if meeting["status"] != "scheduled":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Meeting {payload.meeting_id} is not active "
+                    f"(current status: '{meeting['status']}')."
+                ),
+            )
+
+    now = utc_now_iso()
+    cursor = db.execute(
+        """
+        INSERT INTO calls (company_id, manager_id, result, meeting_id, notes, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            payload.company_id,
+            payload.manager_id,
+            payload.result,
+            payload.meeting_id,
+            payload.notes,
+            now,
+        ),
+    )
+    db.execute(
+        "UPDATE companies SET status = ? WHERE id = ?",
+        (payload.result, payload.company_id),
+    )
+    db.commit()
+
     row = db.execute(
         """
-        SELECT id, company_id, manager_id, scheduled_at, original_scheduled_at,
-               reschedule_count, status, created_at, updated_at
-        FROM meetings
+        SELECT id, company_id, manager_id, result, meeting_id, notes, created_at
+        FROM calls
         WHERE id = ?
         """,
         (cursor.lastrowid,),
     ).fetchone()
-    return row_to_meeting_response(row)
+    return CallResponse(**dict(row))
